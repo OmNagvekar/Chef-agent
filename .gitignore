@@ -1,0 +1,9 @@
+.env
+*.log
+.langgraph_api/
+/Logs
+/venv
+/__pycache__/
+/temp_html
+temp.txt
+Notes.md

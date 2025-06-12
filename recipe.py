@@ -1,0 +1,27 @@
+from pydantic import BaseModel,Field
+from typing import Dict,List,Any,Optional
+import json
+
+class Recipe(BaseModel):
+    """
+    Represents a recipe with its details.
+    """
+    title: str = Field(default=None, description="The title of the recipe")
+    ingredients: List[str] = Field(default_factory=list, description="List of ingredients required for the recipe")
+    instructions: List[str] = Field(default_factory=list, description="Step-by-step instructions for preparing the recipe")
+    image_url: Optional[str] = Field(default=None, description="URL of the recipe image")
+    video_url: Optional[str] = Field(default=None, description="URL of a video demonstrating the recipe")
+    prep_time: Optional[str] = Field(default=None, description="Preparation time for the recipe")
+    cook_time: Optional[str] = Field(default=None, description="Cooking time for the recipe")
+    servings: Optional[int] = Field(default=None, description="Number of servings the recipe yields")
+    cuisine: Optional[str] = Field(default=None, description="Type of cuisine (e.g., Italian, Mexican)")
+    category: Optional[str] = Field(default=None, description="Category of the recipe (e.g., dessert, main course)")
+    nutrition: Optional[Dict[str, Any]] = Field(
+        default=None, 
+        description="Nutritional information of the recipe, such as calories, fat, protein, etc."
+    ) 
+    # e.g., {'calories': '200 kcal', 'fat': '10g'}
+    
+    def to_json_string(self):
+        """Converts the Data object to a JSON string."""
+        return json.dumps(self.model_dump(mode='json'), indent=4)
