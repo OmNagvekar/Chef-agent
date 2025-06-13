@@ -154,4 +154,3 @@ def build_graph():
     
 if __name__ == "__main__":
     asyncio.run(get_tools())
-    asyncio.run(register_agent())

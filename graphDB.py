@@ -9,6 +9,7 @@ import logging
 from tqdm import tqdm
 import os
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_neo4j import GraphCypherQAChain
 
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,23 @@ class GraphDB:
         except Exception as e:
             logger.error(f"Error executing query: {e}")
             return []
+    
+    async def query(self,query:str)-> Dict[str,Any]:
+        """ Queries the Neo4j graph using a GraphCypherQAChain.
+        This method allows you to ask questions about the graph data using natural language queries.
+
+        Args:
+            query (str): The natural language query to ask about the graph data.
+
+        Returns:
+            Dict[str,Any]: A dictionary containing the response from the graph, which may include the answer to the query and any relevant context or metadata.
+        """
+        chain = GraphCypherQAChain.from_llm(
+            graph=self.graph, llm=self.llm, allow_dangerous_requests=True
+        )
+        response = await chain.ainvoke(query)
+        logger.info(f"Query response: {response}")
+        return response
         
 if __name__ == "__main__":
     import asyncio
