@@ -7,6 +7,8 @@ class Recipe(BaseModel):
     Represents a recipe with its details.
     """
     title: str = Field(default=None, description="The title of the recipe")
+    description: Optional[str] = Field(default=None, description="A brief description of the recipe")
+    veg_nonveg: Literal["veg", "nonveg"] = Field(default=None, description="Indicates if the recipe is vegetarian or non-vegetarian")
     ingredients: List[str] = Field(default_factory=list, description="List of ingredients required for the recipe")
     instructions: List[str] = Field(default_factory=list, description="Step-by-step instructions for preparing the recipe")
     image_url: Optional[str] = Field(default=None, description="URL of the recipe image")

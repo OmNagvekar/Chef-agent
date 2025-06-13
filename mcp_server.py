@@ -25,7 +25,7 @@ load_dotenv()
 TODAY_DATE = datetime.now().strftime("%Y-%m-%d")
 LOG_DIR='Logs'
 os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, f"logs_{TODAY_DATE}.log")
+LOG_FILE = os.path.join(LOG_DIR, f"MCP_logs_{TODAY_DATE}.log")
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(filename)s - %(message)s",
@@ -44,7 +44,7 @@ def delete_old_logs():
         try:
             now = datetime.now()
             for filename in os.listdir(LOG_DIR):
-                if filename.startswith("logs_") and filename.endswith(".log"):
+                if filename.startswith("MCP_logs_") and filename.endswith(".log"):
                     file_path = os.path.join(LOG_DIR, filename)
 
                     # Extract date from filename (assumes format "logs_YYYY-MM-DD.log")
