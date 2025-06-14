@@ -2,11 +2,14 @@ import asyncio
 import httpx
 import platform
 import socket
-from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.tools import load_mcp_tools
+from langchain_mcp_adapters.resources import get_mcp_resource
+from mcp import ClientSession
+from mcp.client.streamable_http  import streamablehttp_client
 from recipe import Recipe
 from trustcall import create_extractor
 from dotenv import load_dotenv
-from langchain_google_generativeai import ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langgraph.graph import START, StateGraph, MessagesState,END
 from langgraph.prebuilt import tools_condition
@@ -52,7 +55,7 @@ def delete_old_logs():
                     file_path = os.path.join(LOG_DIR, filename)
 
                     # Extract date from filename (assumes format "logs_YYYY-MM-DD.log")
-                    file_date_str = filename[5:15]
+                    file_date_str = filename[12:22]
                     try:
                         file_date = datetime.strptime(file_date_str, "%Y-%m-%d")
                     except Exception as e:
@@ -110,20 +113,30 @@ def delete_old_logs():
 cleanup_thread = threading.Thread(target=delete_old_logs, daemon=True)
 cleanup_thread.start()
 
-async def get_tools():
-    client = MultiServerMCPClient({
-        "ChefTools MCP API Server": {
-            "url": "http://localhost:8000/sse",
-            "transport": "sse",
-            # "headers": {"Authorization": "Bearer ..." }  # if you use auth
-        }
-    })
-    tools = await client.get_tools()  # async fetch of tool definitions :contentReference[oaicite:2]{index=2}
-
+async def get_tools(session:ClientSession):
+    tools  = await load_mcp_tools(session)
     print("✅ Discovered tools:", [t.name for t in tools])
+    print("Description of tools:", [t.description for t in tools])
+    logger.info("✅ Discovered tools: %s", [t.name for t in tools])
     return tools
 
-def intialize_llm(recipe:Recipe,provider:str="google"):
+async def access_resource(session:ClientSession,query:str):
+    prompt=f"{query}\nNote: Ignore case and punctuation"
+    response = await session.read_resource(f"graph://query/{prompt}")
+    print(f"✅ Response: {response}")
+    logger.info("✅ Response: %s", response)
+    return response
+
+async def main():
+    async with streamablehttp_client("http://127.0.0.1:8000/mcp") as (read, write, _):
+        async with ClientSession(read,write) as session:
+            # Initialize the connection
+            await session.initialize()
+            tools = await get_tools(session)
+            resource_response = await access_resource(session,"what are the the ingredient are required to make butter chicken")
+
+
+async def intialize_llm(recipe:Recipe,provider:str="google"):
     if provider == "google":
         # Google Gemini
         rate_limiter = InMemoryRateLimiter(
@@ -143,14 +156,15 @@ def intialize_llm(recipe:Recipe,provider:str="google"):
         tool_choice="recipe",
         enable_inserts=True,
     )
-    return llm_with_tools,llm_with_structured
+    return llm,llm_with_tools,llm_with_structured
 
 def build_graph():
     # Build the graph with the tools and LLMs
     recipe = Recipe()
-    llm_with_tools, llm_with_structured = intialize_llm(recipe, provider="google")
+    llm,llm_with_tools, llm_with_structured = await intialize_llm(recipe, provider="google")
     
+
     
     
 if __name__ == "__main__":
-    asyncio.run(get_tools())
+    asyncio.run(main())

@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+import contextlib
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
@@ -19,7 +20,9 @@ from datetime import datetime, timedelta
 import threading
 import asyncio
 from dotenv import load_dotenv
-
+from graphDB import GraphDB
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.rate_limiters import InMemoryRateLimiter
 load_dotenv()
 
 TODAY_DATE = datetime.now().strftime("%Y-%m-%d")
@@ -48,7 +51,7 @@ def delete_old_logs():
                     file_path = os.path.join(LOG_DIR, filename)
 
                     # Extract date from filename (assumes format "logs_YYYY-MM-DD.log")
-                    file_date_str = filename[5:15]
+                    file_date_str = filename[9:19]
                     try:
                         file_date = datetime.strptime(file_date_str, "%Y-%m-%d")
                     except Exception as e:
@@ -105,23 +108,26 @@ def delete_old_logs():
 cleanup_thread = threading.Thread(target=delete_old_logs, daemon=True)
 cleanup_thread.start()
 
-
-app = FastAPI()
-
-
 mcp = FastMCP("ChefTools MCP API Server")
 
+# Create a combined lifespan to manage both session managers
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with contextlib.AsyncExitStack() as stack:
+        await stack.enter_async_context(mcp.session_manager.run())
+        yield
+
+app = FastAPI(lifespan=lifespan)
+
+rate_limiter = InMemoryRateLimiter(
+    requests_per_second=5.0,     # maximum 5 requests per second
+)
+
+llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash",max_retries=4 ,temperature=0,rate_limiter=rate_limiter)
+graph_db = GraphDB(llm =llm,refresh_schema=True)
 
 # Mount MCP Server on FastAPI Server
-app.mount("/", mcp.sse_app())
-
-# fastmcp = FastApiMCP(
-#     app,
-#     name="ChefTools MCP API Server",
-#     description="A modular control plane API server for managing and integrating ChefTools components, services, and workflows.",
-# )
-
-
+app.mount("/", mcp.streamable_http_app())
 
 app.add_middleware(
     CORSMiddleware,
@@ -251,12 +257,97 @@ async def web_scraper(url: str) -> Dict[str, str]:
         return {"error": "Both FireCrawl and fallback scraping failed."}
 
 
+@mcp.tool()
+async def ingest_url_to_graph(url:str) -> Dict[str, str]:
+    """
+    Ingest content at the given URL into the ChefTools knowledge graph.
+
+    This tool will:
+    1. Scrape or load the document from the URL.
+    2. Convert it into GraphDocument structures via the LLM transformer.
+    3. Add those GraphDocuments as new nodes and relationships in Neo4j.
+
+    Args:
+        url (str):  
+            The HTTP(S) address of a recipe or cooking‑related document to ingest.
+
+    Returns:
+        Dict[str, str]:
+            - status: "success" or "error"
+            - message: human‑readable summary of the ingestion outcome.
+    """
+    status = await graph_db.run(url=url)
+    if status:
+        logger.info("Graph updated successfully.")
+        print("✅ Graph updated successfully.")
+        return {"status": "success", "message":"Graph updated successfully."}
+    else:
+        logger.error("Failed to update graph.")
+        print("❌ Failed to update graph.")
+        return {"status":"error","message": "Failed to update graph."}
+
+
+@mcp.resource(uri="graph://query/{query_text}")
+async def graph_query(query_text: str) -> Dict[str, Any]:
+    """
+    Ask a cooking‑specific question of the knowledge graph in plain English.
+
+    Internally uses the GraphCypherQAChain to:
+    1. Translate your natural‑language question into Cypher.
+    2. Execute the Cypher query.
+    3. Return the answer along with context.
+
+    Args:
+        query_text (str):
+            A user’s question about recipes, ingredients, cuisines, or nutrition.
+
+    Returns:
+        Dict[str, Any]:
+            - answer: the LLM‑generated response
+    """
+    response = await graph_db.query(query_text)
+    return {
+        "answer": response,
+    }
+
+
+@mcp.tool()
+async def execute_cypher(query: str) -> Dict[str, Any]:
+    """
+    Execute a raw Cypher statement on the ChefTools Neo4j graph.
+
+    **WARNING:** This tool can modify the graph schema or data—
+    including creating, updating, or deleting nodes and relationships.
+    Only use when you fully trust and verify the Cypher you are running.
+
+    Args:
+        query (str):
+            The exact Cypher command to execute (READ or WRITE).
+
+    Returns:
+        Dict[str, Any]:
+            - status: "success" or "error"
+            - records: list of result records (for read queries)
+            - message: database response summary or error message
+    """
+    try:
+        # This call may be read-only or write, depending on the Cypher.
+        results = graph_db.Cypher_query(query)
+        logger.info("Cypher executed: %s", query)
+        return {"status": "success", "records": results, "message": f"{len(results)} records returned"}
+    except Exception as e:
+        logger.error("Error executing Cypher: %s", e)
+        return {"status": "error", "records": [], "message": str(e)}
+
+
+
+
 @app.get("/health")
-def health_check():
+async def health_check():
     return {"status": "ok"}
 
 
 if __name__ == "__main__":
     # fastmcp.mount()
-    # mcp.run(transport='sse')
+    # mcp.run(transport='streamable-http')
     uvicorn.run(app, host="127.0.0.1", port=8000)

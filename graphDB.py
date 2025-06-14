@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from langchain_experimental.graph_transformers import LLMGraphTransformer
 from langchain_community.graphs.graph_document import GraphDocument
 from scrapper import WebScraper
-from typing import List, Any, Literal
+from typing import List, Any, Literal, Dict
 from langchain_core.documents import Document
 import logging
 from tqdm import tqdm
@@ -152,14 +152,14 @@ class GraphDB:
             logger.error(f"Error in GraphDB run: {e}")
             return False
     
-    async def Cypher_query(self, query: str) -> List[Any]:
+    async def Cypher_query(self, query: str) -> List[Dict[str,Any]]:
         """Queries the Neo4j graph with a Cypher query.
 
         Args:
             query (str): The Cypher query to execute.
 
         Returns:
-            List[Any]: The results of the query.
+            List[Dict[str,Any]]: A list of dictionaries containing the results of the query.
         """
         try:
             results = self.graph.query(query)
@@ -180,9 +180,10 @@ class GraphDB:
             Dict[str,Any]: A dictionary containing the response from the graph, which may include the answer to the query and any relevant context or metadata.
         """
         chain = GraphCypherQAChain.from_llm(
-            graph=self.graph, llm=self.llm, allow_dangerous_requests=True
+            graph=self.graph, llm=self.llm, verbose=True,allow_dangerous_requests=True
         )
         response = await chain.ainvoke(query)
+        print(response)
         logger.info(f"Query response: {response}")
         return response
         
