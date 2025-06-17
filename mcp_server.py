@@ -287,57 +287,59 @@ async def ingest_url_to_graph(url:str) -> Dict[str, str]:
         return {"status":"error","message": "Failed to update graph."}
 
 
-@mcp.resource(uri="graph://query/{query_text}")
+@mcp.tool()
 async def graph_query(query_text: str) -> Dict[str, Any]:
     """
-    Ask a cooking‑specific question of the knowledge graph in plain English.
-
-    Internally uses the GraphCypherQAChain to:
-    1. Translate your natural‑language question into Cypher.
-    2. Execute the Cypher query.
-    3. Return the answer along with context.
+    Translate a natural‑language instruction into Cypher and execute it on the graph.
+    Supports reads, writes, updates, and deletes.  
+    Example: "Update the Butter Chicken recipe to add garlic ginger paste".
 
     Args:
-        query_text (str):
-            A user’s question about recipes, ingredients, cuisines, or nutrition.
+        query_text (str): Natural‑language instruction or Cypher snippet.
 
     Returns:
         Dict[str, Any]:
-            - answer: the LLM‑generated response
+          - status: "success" or "error"
+          - cypher: executed Cypher statement
+          - records: result rows or write summary
+          - answer: LLM confirmation or explanation
+          - message: human‑readable summary or error
+
+    WARNING: May modify the graph (CREATE, MERGE, SET, DELETE). Verify before use.
     """
     response = await graph_db.query(query_text)
     return {
-        "answer": response,
+        "response": response,
     }
 
 
-@mcp.tool()
-async def execute_cypher(query: str) -> Dict[str, Any]:
-    """
-    Execute a raw Cypher statement on the ChefTools Neo4j graph.
+# @mcp.tool()
+# async def execute_cypher(query: str) -> Dict[str, Any]:
+#     """
+#     Execute a raw Cypher statement on the ChefTools Neo4j graph.
 
-    **WARNING:** This tool can modify the graph schema or data—
-    including creating, updating, or deleting nodes and relationships.
-    Only use when you fully trust and verify the Cypher you are running.
+#     **WARNING:** This tool can modify the graph schema or data—
+#     including creating, updating, or deleting nodes and relationships.
+#     Only use when you fully trust and verify the Cypher you are running.
 
-    Args:
-        query (str):
-            The exact Cypher command to execute (READ or WRITE).
+#     Args:
+#         query (str):
+#             The exact Cypher command to execute (READ or WRITE).
 
-    Returns:
-        Dict[str, Any]:
-            - status: "success" or "error"
-            - records: list of result records (for read queries)
-            - message: database response summary or error message
-    """
-    try:
-        # This call may be read-only or write, depending on the Cypher.
-        results = graph_db.Cypher_query(query)
-        logger.info("Cypher executed: %s", query)
-        return {"status": "success", "records": results, "message": f"{len(results)} records returned"}
-    except Exception as e:
-        logger.error("Error executing Cypher: %s", e)
-        return {"status": "error", "records": [], "message": str(e)}
+#     Returns:
+#         Dict[str, Any]:
+#             - status: "success" or "error"
+#             - records: list of result records (for read queries)
+#             - message: database response summary or error message
+#     """
+#     try:
+#         # This call may be read-only or write, depending on the Cypher.
+#         results = graph_db.Cypher_query(query)
+#         logger.info("Cypher executed: %s", query)
+#         return {"status": "success", "records": results, "message": f"{len(results)} records returned"}
+#     except Exception as e:
+#         logger.error("Error executing Cypher: %s", e)
+#         return {"status": "error", "records": [], "message": str(e)}
 
 
 

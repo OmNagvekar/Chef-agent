@@ -27,3 +27,42 @@ class Recipe(BaseModel):
     def to_json_string(self):
         """Converts the Data object to a JSON string."""
         return json.dumps(self.model_dump(mode='json'), indent=4)
+    
+class Profile(BaseModel):
+    """
+    Represents a user profile with basic information.
+    """
+    name: str = Field(default=None, description="Name of the user")
+    recipes: List[Recipe] = Field(
+        default_factory=list, 
+        description="List of recipes saved by the user"
+    )
+    preferences: Dict[str, Any] = Field(
+        default_factory=dict, 
+        description="User preferences such as dietary restrictions, favorite cuisines, etc."
+    )
+    
+    def to_json_string(self):
+        """Converts the Profile object to a JSON string."""
+        return json.dumps(self.model_dump(mode='json'), indent=4)
+    
+class UpdateGraphDecision(BaseModel):
+    """
+    Represents a decision to update the graph with new data.
+    """
+    should_update: bool = Field(
+        default=False, 
+        description="Set to True if the graph needs to be updated or new information added"
+    )
+    tool_choice:Literal["graph_query","ingest_url_to_graph","both","none"] = Field(
+        default="none", 
+        description="The tool to use for updating the graph. Options are 'graph_query', 'ingest_url_to_graph', or 'both'."
+    )
+    reason: Optional[str] = Field(
+        default=None, 
+        description="Reason for the update decision with information need to updated or added to the graph"
+    )
+    
+    def to_json_string(self):
+        """Converts the UpdateGraphDecision object to a JSON string."""
+        return json.dumps(self.model_dump(mode='json'), indent=4)

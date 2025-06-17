@@ -179,12 +179,16 @@ class GraphDB:
         Returns:
             Dict[str,Any]: A dictionary containing the response from the graph, which may include the answer to the query and any relevant context or metadata.
         """
-        chain = GraphCypherQAChain.from_llm(
-            graph=self.graph, llm=self.llm, verbose=True,allow_dangerous_requests=True
-        )
-        response = await chain.ainvoke(query)
-        print(response)
-        logger.info(f"Query response: {response}")
+        try:
+            chain = GraphCypherQAChain.from_llm(
+                graph=self.graph, llm=self.llm, verbose=True,allow_dangerous_requests=True
+            )
+            response = await chain.ainvoke(query)
+            print(response)
+            logger.info(f"Query response: {response}")
+        except Exception as e:
+            logger.error(f"Error in query execution: {e}")
+            response = {"error": str(e)}
         return response
         
 if __name__ == "__main__":
