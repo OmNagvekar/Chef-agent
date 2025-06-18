@@ -37,8 +37,8 @@ class Profile(BaseModel):
         default_factory=list, 
         description="List of recipes saved by the user"
     )
-    preferences: Dict[str, Any] = Field(
-        default_factory=dict, 
+    preferences: List[str] = Field(
+        default_factory=list, 
         description="User preferences such as dietary restrictions, favorite cuisines, etc."
     )
     
@@ -58,9 +58,17 @@ class UpdateGraphDecision(BaseModel):
         default="none", 
         description="The tool to use for updating the graph. Options are 'graph_query', 'ingest_url_to_graph', or 'both'."
     )
-    reason: Optional[str] = Field(
+    reason: str = Field(
         default=None, 
-        description="Reason for the update decision with information need to updated or added to the graph"
+        description="Reason for the update; include URL if ingesting, or recipe details if querying"
+    )
+    url:Optional[str] = Field(
+        default=None,
+        description = "URL to be ingested when using ingest_url_to_graph tool"
+    )
+    recipe:Optional[Recipe] = Field(
+        default=None,
+        description="Recipe object to apply when using graph_query tool"
     )
     
     def to_json_string(self):

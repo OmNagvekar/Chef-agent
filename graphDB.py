@@ -26,7 +26,7 @@ class GraphDB:
 
         self.graph = Neo4jGraph(refresh_schema=refresh_schema)
         self.llm = llm
-        self.transformer = llm_transformer_filtered = LLMGraphTransformer(
+        self.transformer = LLMGraphTransformer(
             llm=llm,
             allowed_nodes=["RecipeName", "Veg_nonveg", "Ingredient", "NutritionFact", "Cuisine", "Category", "InstructionSteps"],
             allowed_relationships=[
@@ -169,7 +169,7 @@ class GraphDB:
             logger.error(f"Error executing query: {e}")
             return []
     
-    async def query(self,query:str)-> Dict[str,Any]:
+    async def query(self,query:str,llm)-> Dict[str,Any]:
         """ Queries the Neo4j graph using a GraphCypherQAChain.
         This method allows you to ask questions about the graph data using natural language queries.
 
@@ -181,9 +181,9 @@ class GraphDB:
         """
         try:
             chain = GraphCypherQAChain.from_llm(
-                graph=self.graph, llm=self.llm, verbose=True,allow_dangerous_requests=True
+                graph=self.graph, llm=llm, verbose=True,allow_dangerous_requests=True
             )
-            response = await chain.ainvoke(query)
+            response = await chain.ainvoke({"query":query})
             print(response)
             logger.info(f"Query response: {response}")
         except Exception as e:

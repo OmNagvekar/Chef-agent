@@ -22,7 +22,9 @@ import asyncio
 from dotenv import load_dotenv
 from graphDB import GraphDB
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.rate_limiters import InMemoryRateLimiter
+import re
 load_dotenv()
 
 TODAY_DATE = datetime.now().strftime("%Y-%m-%d")
@@ -123,7 +125,9 @@ rate_limiter = InMemoryRateLimiter(
     requests_per_second=5.0,     # maximum 5 requests per second
 )
 
-llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash",max_retries=4 ,temperature=0,rate_limiter=rate_limiter)
+llm_query = ChatGoogleGenerativeAI(model="gemini-2.0-flash",max_retries=4 ,temperature=0,rate_limiter=rate_limiter)
+llm = ChatGroq(model="qwen-qwq-32b", temperature=0)
+
 graph_db = GraphDB(llm =llm,refresh_schema=True)
 
 # Mount MCP Server on FastAPI Server
@@ -307,7 +311,7 @@ async def graph_query(query_text: str) -> Dict[str, Any]:
 
     WARNING: May modify the graph (CREATE, MERGE, SET, DELETE). Verify before use.
     """
-    response = await graph_db.query(query_text)
+    response = await graph_db.query(query_text,llm=llm_query)
     return {
         "response": response,
     }

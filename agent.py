@@ -17,19 +17,25 @@ from langgraph.prebuilt import ToolNode
 from langchain_core.messages import SystemMessage, HumanMessage, RemoveMessage
 from langchain_core.rate_limiters import InMemoryRateLimiter
 from langgraph.store.base import BaseStore
-from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-from langgraph.store.redis.aio import AsyncRedisStore
+# from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+# from langgraph.store.redis.aio import AsyncRedisStore
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.store.memory import InMemoryStore
 from langchain_core.runnables.config import RunnableConfig
 import logging
 import os
 import time
+from typing import Literal
 import threading
 import sys
 from datetime import datetime, timedelta
 from langchain_core.messages import SystemMessage, HumanMessage, RemoveMessage
 from IPython.display import Image, display
-    
-
+from langfuse.langchain import CallbackHandler
+from langmem.short_term import SummarizationNode
+from langchain_core.messages.utils import count_tokens_approximately
+import json
+import re
 load_dotenv()  # Load environment variables from .env file
 
 DB_URI = os.getenv("DB_URI")
@@ -49,32 +55,44 @@ logging.basicConfig(
 )
 
 # Load System prompt from a text file
+def load_promt(template:Literal["SYSTEM_PROMPT","decision_prompt","conversation_prompt","summarization_prompt"]=None):
+    if template == "SYSTEM_PROMPT":
+        with open("./prompts/SYSTEM_PROMPT.txt",'r', encoding='utf-8') as f:
+            SYSTEM_PROMPT_msg = f.read()
+            print("✅ System prompt loaded successfully.")
+        return SYSTEM_PROMPT_msg
 
-with open("./prompts/SYSTEM_PROMPT.txt",'r', encoding='utf-8') as f:
-    SYSTEM_PROMPT = f.read()
-    print("✅ System prompt loaded successfully.")
+    elif template == "decision_prompt":
+        with open("./prompts/decision_prompt.txt",'r', encoding='utf-8') as f:
+            decision_prompt_msg = f.read()
+            decision_prompt_msg = SystemMessage(content=decision_prompt_msg)
+            print("✅ decision prompt loaded successfully.")
+        return decision_prompt_msg
+    
+    elif template == "conversation_prompt":
 
-with open("./prompts/decision_prompt.txt",'r', encoding='utf-8') as f:
-    decision_prompt = f.read()
-    decision_prompt = SystemMessage(content=decision_prompt)
-    print("✅ decision prompt loaded successfully.")
-
-with open("./prompts/conversation_prompt.txt",'r', encoding='utf-8') as f:
-    conversation_prompt = f.read()
-    conversation_prompt = SystemMessage(content=conversation_prompt)
-    # This is the conversation prompt that will be used in the workflow
-    print("✅ Conversation prompt loaded successfully.")
-
-with open("./prompts/summarization_prompt.txt",'r', encoding='utf-8') as f:
-    summarization_prompt = f.read()
-    summarization_prompt = SystemMessage(content=summarization_prompt)
-    # This is the conversation prompt that will be used in the workflow
-    print("✅ summarization prompt loaded successfully.")
+        with open("./prompts/conversation_prompt.txt",'r', encoding='utf-8') as f:
+            conversation_prompt_msg = f.read()
+            conversation_prompt_msg = SystemMessage(content=conversation_prompt_msg)
+            # This is the conversation prompt that will be used in the workflow
+            print("✅ Conversation prompt loaded successfully.")
+        return conversation_prompt_msg
+    
+    elif template == "summarization_prompt":
+        with open("./prompts/summarization_prompt.txt",'r', encoding='utf-8') as f:
+            summarization_prompt_msg = f.read()
+            summarization_prompt_msg = SystemMessage(content=summarization_prompt_msg)
+            # This is the conversation prompt that will be used in the workflow
+            print("✅ summarization prompt loaded successfully.")
+        return summarization_prompt_msg
+    else:
+        print("Invalid template name. Please choose from 'SYSTEM_PROMPT', 'decision_prompt', 'conversation_prompt', or 'summarization_prompt'.")
 
 class State(MessagesState):
     RecipeIntstruction: str
     AudioMessage:str
     has_final:bool
+    summary:str
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -166,21 +184,34 @@ async def get_tools(session:ClientSession):
 #     return response
 
 async def main():
-    async with (
-        AsyncRedisStore.from_conn_string(DB_URI) as store,
-        AsyncRedisSaver.from_conn_string(DB_URI) as checkpointer,
-    ):
-        async with streamablehttp_client("http://127.0.0.1:8000/mcp") as (read, write, _):
-            async with ClientSession(read,write) as session:
-                # Initialize the connection
-                await session.initialize()
-                tools = await get_tools(session)
-                graph_png_path = "./graph.png"
-                graph = await build_graph(tools,checkpointer,store)
-                display(Image(graph.get_graph(xray=True).draw_mermaid_png(output_file_path=graph_png_path)))
+    async with streamablehttp_client("http://127.0.0.1:8000/mcp") as (read, write, _):
+        async with ClientSession(read,write) as session:
+            # Initialize the connection
+            await session.initialize()
+            tools = await get_tools(session)
+            graph_png_path = "./graph.png"
+            graph,memStore = build_graph(tools)
+            langfuse_handler = CallbackHandler()
+            # display(Image(graph.get_graph(xray=True).draw_mermaid_png(output_file_path=graph_png_path)))
+            config = {"configurable": {"thread_id": "1", "user_id": "1"},"callbacks": [langfuse_handler]}
+            input_message = HumanMessage(content="how to make idli ?")
+            async for chunk in graph.astream({"messages": input_message}, config, stream_mode="values"):
+                chunk["messages"][-1].pretty_print()
+            namespace =("memory","1")
+            existing_memory = memStore.get(namespace, "user_memory")
+            print(f"\n\n## memory {existing_memory}\n\n")
+            print("#####"*30,"\n\n")
+            thread = {"configurable": {"thread_id": "1"}}
+            temp = graph.get_state(thread)
+            stetes = temp.values.get("messages")
+            for m in stetes:
+                m.pretty_print()
+            temp = graph.get_state(thread)
+            stetes = temp.values.get("summary")
+            print(stetes)
             
 
-async def intialize_llm(provider:str="google"):
+def intialize_llm(provider:str="google"):
     if provider == "google":
         # Google Gemini
         rate_limiter = InMemoryRateLimiter(
@@ -194,20 +225,22 @@ async def intialize_llm(provider:str="google"):
 
     return llm
 
-async def build_graph(tools,checkpointer,store: BaseStore):
+def build_graph(tools):
     # Build the graph with the tools and LLMs
-    llm = await intialize_llm(provider="google")
+    llm = intialize_llm(provider="groq")
     llm_with_tools = llm.bind_tools(tools)
     decision_llm = create_extractor(
         llm,
         tools=[UpdateGraphDecision],
         tool_choice="UpdateGraphDecision",
+        enable_inserts=True,
     )
     profile_llm = create_extractor(
         llm,
         tools=[Profile],
         tool_choice="Profile",
     )
+
     def assistant(state:State,config: RunnableConfig,store: BaseStore):
         """The assistant node that generates a response based on the current state."""
         # Get the user ID from the config
@@ -222,6 +255,7 @@ async def build_graph(tools,checkpointer,store: BaseStore):
             memory = existing_memory.value
         else:
             memory=""
+        SYSTEM_PROMPT = load_promt("SYSTEM_PROMPT")
         SYSTEM_PROMPT = SystemMessage(content=SYSTEM_PROMPT.format(memory=memory))
         messages = [SYSTEM_PROMPT] + state["messages"]
         
@@ -230,16 +264,20 @@ async def build_graph(tools,checkpointer,store: BaseStore):
         marker = "[FinalAnswer]:"
         answer = response.content
         idx = answer.find(marker)
+        pattern = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
+        def strip_think(text: str) -> str:
+            return pattern.sub("", text)
         if idx != -1:
             # Extract text after the marker and strip whitespace
             parsed = answer[idx + len(marker):].strip()
-            return {"messages":[response],"RecipeIntstruction":parsed,"has_final":True}
+            return {"messages":[response],"RecipeIntstruction":strip_think(parsed),"has_final":True}
         else:
             # Fallback: no marker found, return full content stripped
             parsed = answer.strip()
         return {"messages":[response],"has_final":False}
     
     def update_graph(state:State):
+        decision_prompt = load_promt("decision_prompt")
         messages = [decision_prompt] + state["messages"]
         response = decision_llm.invoke({"messages":messages})
         result = response["responses"][0].model_dump()
@@ -250,9 +288,9 @@ async def build_graph(tools,checkpointer,store: BaseStore):
             - false → skip any graph changes.
 
         2. tool_choice (one of):
-            - graph_query        → call graph_query(reason).
-            - ingest_url_to_graph → call ingest_url_to_graph(reason).
-            - both               → first graph_query(reason), then ingest_url_to_graph(reason).
+            - graph_query        → call graph_query().
+            - ingest_url_to_graph → call ingest_url_to_graph().
+            - both               → first graph_query(), then ingest_url_to_graph().
             - none               → do nothing.
 
         3. Available Tools:
@@ -265,9 +303,10 @@ async def build_graph(tools,checkpointer,store: BaseStore):
         ```"""
 
         if result["should_update"]:
-            system_message = SystemMessage(content=followup_template.format(decision=result))
+            print("✅"*4,"\n\n")
+            system_message = SystemMessage(content=followup_template.format(decision=json.dumps(result, indent=4)))
             tools_response = llm_with_tools.invoke(
-                {"messages": [system_message]+ state["messages"]}
+                [system_message]
             )
             return {"messages":[tools_response]}
         else:
@@ -275,11 +314,16 @@ async def build_graph(tools,checkpointer,store: BaseStore):
     
     
     def finalize_answer(state: State):
-        messages = [conversation_prompt]+state["RecipeIntstruction"]
+        conversation_prompt = load_promt("conversation_prompt")
+        messages = [conversation_prompt]+[state["RecipeIntstruction"]]
         response = llm.invoke(messages)
         logger.info("Final answer generated: %s", response.content)
+        pattern = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
+
+        def strip_think(text: str) -> str:
+            return pattern.sub("", text)
         
-        return {"messages": state["messages"] + [response], "has_final": False,"AudioMessage":response.content}
+        return {"messages": state["messages"] + [response], "has_final": False,"AudioMessage":strip_think(response.content)}
     
     def write_memory(state: State, store: BaseStore, config: RunnableConfig):
         """Writes the current state to the memory store."""
@@ -291,12 +335,12 @@ async def build_graph(tools,checkpointer,store: BaseStore):
         namespace = ("memory", user_id)
         existing_memory = store.get(namespace, "user_memory")
         # Get the profile as the value from the list, and convert it to a JSON doc
-        existing_profile = {"UserProfile": existing_memory.value} if existing_memory else None
+        existing_profile = {"UserProfile": existing_memory.value} if existing_memory else "None"
         CREATE_MEMORY_INSTRUCTION = """Create or update a user profile memory based on the user's chat history.
         This will be saved for long-term memory. If there is an existing memory, simply update it.
         Here is the existing memory (it may be empty): {memory}"""
         
-        result = trustcall_extractor.invoke({"messages": [SystemMessage(content=CREATE_MEMORY_INSTRUCTION.format(memory=existing_profile))]+state["messages"]})
+        result = profile_llm.invoke([SystemMessage(content=CREATE_MEMORY_INSTRUCTION.format(memory=existing_profile))]+state["messages"])
         
         # Get the updated profile as a JSON object
         updated_profile = result["responses"][0].model_dump()
@@ -304,16 +348,15 @@ async def build_graph(tools,checkpointer,store: BaseStore):
         # Save the updated profile
         key = "user_memory"
         store.put(namespace, key, updated_profile)
-        
-        summary = llm.invoke({"messages": [summarization_prompt]+ state["messages"]})
-        
-        # Delete all but the 2 most recent messages
-        delete_messages = [RemoveMessage(id=m.id) for m in state["messages"][:-2]]
-        
-        return {
-            "messages": state["messages"] + [summary] + delete_messages,
-        }
-
+    
+    summarization_node = SummarizationNode(
+        token_counter=count_tokens_approximately,
+        model=llm,
+        max_tokens=512,
+        max_tokens_before_summary=512,
+        max_summary_tokens=128,
+        output_messages_key="messages"
+    )
 
     workflow = StateGraph(State)
     
@@ -322,6 +365,7 @@ async def build_graph(tools,checkpointer,store: BaseStore):
     workflow.add_node("update_graph", update_graph)
     workflow.add_node("finalize_answer", finalize_answer)
     workflow.add_node("write_memory", write_memory)
+    workflow.add_node("summarization_node",summarization_node)
     
     workflow.add_edge(START, "assistant")
     workflow.add_conditional_edges(
@@ -336,11 +380,13 @@ async def build_graph(tools,checkpointer,store: BaseStore):
     workflow.add_edge("tools", "assistant")
     workflow.add_edge("update_graph", "finalize_answer")
     workflow.add_edge("finalize_answer","write_memory")
-    workflow.add_edge("write_memory", END)
+    workflow.add_edge("write_memory","summarization_node")
+    workflow.add_edge("summarization_node", END)
     
+    checkpointer = InMemorySaver()
+    store = InMemoryStore()
     graph = workflow.compile(store=store, checkpointer=checkpointer)
-    return graph
-
+    return graph,store
     
     
 if __name__ == "__main__":
