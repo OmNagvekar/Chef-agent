@@ -55,18 +55,25 @@ logging.basicConfig(
 )
 
 # Load System prompt from a text file
-def load_promt(template:Literal["SYSTEM_PROMPT","decision_prompt","conversation_prompt","summarization_prompt"]=None):
+def load_promt(template:Literal["SYSTEM_PROMPT","decision_prompt","conversation_prompt","summarization_prompt"]=None,provider:str="groq"):
     if template == "SYSTEM_PROMPT":
         with open("./prompts/SYSTEM_PROMPT.txt",'r', encoding='utf-8') as f:
             SYSTEM_PROMPT_msg = f.read()
             print("✅ System prompt loaded successfully.")
         return SYSTEM_PROMPT_msg
 
-    elif template == "decision_prompt":
+    elif template == "decision_prompt" and provider == "google":
         with open("./prompts/decision_prompt.txt",'r', encoding='utf-8') as f:
             decision_prompt_msg = f.read()
             decision_prompt_msg = SystemMessage(content=decision_prompt_msg)
             print("✅ decision prompt loaded successfully.")
+        return decision_prompt_msg
+    
+    elif template == "decision_prompt" and (provider == "groq" or provider == "cerebras"):
+        with open("./prompts/decision_prompt_2.txt",'r', encoding='utf-8') as f:
+            decision_prompt_msg = f.read()
+            decision_prompt_msg = SystemMessage(content=decision_prompt_msg)
+            print("✅ decision prompt 2 loaded successfully.")
         return decision_prompt_msg
     
     elif template == "conversation_prompt":
@@ -91,8 +98,9 @@ def load_promt(template:Literal["SYSTEM_PROMPT","decision_prompt","conversation_
 class State(MessagesState):
     RecipeIntstruction: str
     AudioMessage:str
-    has_final:bool
-    summary:str
+    has_final:bool =False
+    done_update:bool =False
+    updation_prompt:str
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -192,9 +200,9 @@ async def main():
             graph_png_path = "./graph.png"
             graph,memStore = build_graph(tools)
             langfuse_handler = CallbackHandler()
-            # display(Image(graph.get_graph(xray=True).draw_mermaid_png(output_file_path=graph_png_path)))
+            display(Image(graph.get_graph(xray=True).draw_mermaid_png(output_file_path=graph_png_path)))
             config = {"configurable": {"thread_id": "1", "user_id": "1"},"callbacks": [langfuse_handler]}
-            input_message = HumanMessage(content="how to make idli ?")
+            input_message = HumanMessage(content="how to make pani puri ?")
             async for chunk in graph.astream({"messages": input_message}, config, stream_mode="values"):
                 chunk["messages"][-1].pretty_print()
             namespace =("memory","1")
@@ -220,6 +228,9 @@ def intialize_llm(provider:str="google"):
         llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash",max_retries=4,rate_limiter=rate_limiter ,temperature=0)
     elif provider == "groq":
         llm = ChatGroq(model="qwen-qwq-32b", temperature=0)
+    elif provider == "cerebras":
+        from langchain_cerebras import ChatCerebras
+        llm = ChatCerebras(model="qwen-3-32b",temperature=0)
     else:
         raise ValueError("Invalid provider. Choose 'google', 'groq' or 'huggingface'.")
 
@@ -227,7 +238,8 @@ def intialize_llm(provider:str="google"):
 
 def build_graph(tools):
     # Build the graph with the tools and LLMs
-    llm = intialize_llm(provider="groq")
+    provider = "groq"
+    llm = intialize_llm(provider=provider)
     llm_with_tools = llm.bind_tools(tools)
     decision_llm = create_extractor(
         llm,
@@ -243,6 +255,9 @@ def build_graph(tools):
 
     def assistant(state:State,config: RunnableConfig,store: BaseStore):
         """The assistant node that generates a response based on the current state."""
+        print("\n="*10,"\n\n",state.get("has_final"),"\n="*10,"\n\n")
+        if state.get("has_final",False):
+            return {"done_update":True}
         # Get the user ID from the config
         user_id = config["configurable"]["user_id"]
 
@@ -266,7 +281,8 @@ def build_graph(tools):
         idx = answer.find(marker)
         pattern = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
         def strip_think(text: str) -> str:
-            return pattern.sub("", text)
+            m = pattern.sub("", text)
+            return m.strip()
         if idx != -1:
             # Extract text after the marker and strip whitespace
             parsed = answer[idx + len(marker):].strip()
@@ -277,7 +293,7 @@ def build_graph(tools):
         return {"messages":[response],"has_final":False}
     
     def update_graph(state:State):
-        decision_prompt = load_promt("decision_prompt")
+        decision_prompt = load_promt("decision_prompt",provider=provider)
         messages = [decision_prompt] + state["messages"]
         response = decision_llm.invoke({"messages":messages})
         result = response["responses"][0].model_dump()
@@ -294,7 +310,7 @@ def build_graph(tools):
             - none               → do nothing.
 
         3. Available Tools:
-            • graph_query(query_text: str): translate NL into Cypher to update existing nodes/relationships.  
+            • graph_query(query_text: str): Natural Language Query to update or create nodes/relationships by using detailed natural language recipe info/Instrction/details.
             • ingest_url_to_graph(url: str): scrape and ingest a recipe URL into the graph, creating new nodes/relationships.
 
         Below is the decision you must act on:
@@ -303,15 +319,19 @@ def build_graph(tools):
         ```"""
 
         if result["should_update"]:
-            print("✅"*4,"\n\n")
-            system_message = SystemMessage(content=followup_template.format(decision=json.dumps(result, indent=4)))
-            tools_response = llm_with_tools.invoke(
-                [system_message]
-            )
-            return {"messages":[tools_response]}
+            return {"updation_prompt":followup_template.format(decision=json.dumps(result, indent=4))}
         else:
             return {"messages": state["messages"] + [HumanMessage(content="No graph update needed.")]}
     
+    def graph_update_tool_calling(state: State):
+        if state['updation_prompt']:
+            system_message = SystemMessage(content=state["updation_prompt"])
+            tools_response = llm_with_tools.invoke(
+                [system_message]
+            )
+            return {"messages": state["messages"] + [tools_response]}
+        else:
+            return {"messages": state["messages"] + [HumanMessage(content="No graph update needed.")]}
     
     def finalize_answer(state: State):
         conversation_prompt = load_promt("conversation_prompt")
@@ -321,9 +341,10 @@ def build_graph(tools):
         pattern = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
 
         def strip_think(text: str) -> str:
-            return pattern.sub("", text)
+            m = pattern.sub("", text)
+            return m.strip()
         
-        return {"messages": state["messages"] + [response], "has_final": False,"AudioMessage":strip_think(response.content)}
+        return {"messages": state["messages"] + [response], "has_final": False,"done_update":False,"AudioMessage":strip_think(response.content)}
     
     def write_memory(state: State, store: BaseStore, config: RunnableConfig):
         """Writes the current state to the memory store."""
@@ -363,6 +384,7 @@ def build_graph(tools):
     workflow.add_node("assistant", assistant)
     workflow.add_node("tools",ToolNode(tools))
     workflow.add_node("update_graph", update_graph)
+    workflow.add_node("graph_update_tool_calling",graph_update_tool_calling)
     workflow.add_node("finalize_answer", finalize_answer)
     workflow.add_node("write_memory", write_memory)
     workflow.add_node("summarization_node",summarization_node)
@@ -372,13 +394,29 @@ def build_graph(tools):
         "assistant",
         tools_condition,
     )
+    
+    def next_from_assistant(state: State):
+        # 1) If the graph‐update step has completed, go finalize
+        if state.get("done_update",False):
+            return "finalize_answer"
+        # 2) If the assistant just produced a [FinalAnswer], go update the graph
+        if state.get("has_final"):
+            return "update_graph"
+        # 3) Otherwise fall back to tools (or loop back to assistant if you like)
+        return "tools"
     workflow.add_conditional_edges(
         "assistant",
-        lambda state: "update_graph" if state["has_final"] else "tools",
-        {"update_graph": "update_graph", "tools": "tools"}
+        next_from_assistant,
+        {
+            "update_graph": "update_graph",
+            "finalize_answer": "finalize_answer",
+            "tools": "tools"
+        }
     )
+    
     workflow.add_edge("tools", "assistant")
-    workflow.add_edge("update_graph", "finalize_answer")
+    workflow.add_edge("update_graph", "graph_update_tool_calling")
+    workflow.add_edge("graph_update_tool_calling", "tools")
     workflow.add_edge("finalize_answer","write_memory")
     workflow.add_edge("write_memory","summarization_node")
     workflow.add_edge("summarization_node", END)

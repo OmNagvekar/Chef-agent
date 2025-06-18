@@ -10,6 +10,8 @@ from tqdm import tqdm
 import os
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_neo4j import GraphCypherQAChain
+from firecrawl import AsyncFirecrawlApp
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 logger = logging.getLogger(__name__)
@@ -97,20 +99,46 @@ class GraphDB:
             List[Document]: A list of Document objects containing the loaded content.
         """
         if web_scraper:
-            web_scraper = WebScraper()
-            markdown_docs = await web_scraper.load_html_to_md(url)
-            logger.info(f"Loaded {len(markdown_docs)} Markdown documents from {url}.")
-            if not markdown_docs:
-                logger.warning(f"No documents found at {url}.")
-                return []
-            return markdown_docs
+            try:
+                app = AsyncFirecrawlApp(api_key=os.getenv("FIRECRAWL_API_KEY"))
+                result = await app.scrape_url(
+                    url=url,
+                    formats=["markdown"],               # desired output formats
+                    only_main_content=True              # clean page body
+                )
+                # Determine how to extract docs:
+                if hasattr(result, "__iter__") and not hasattr(result, "metadata"):
+                    # It's iterable (tuple/list) of docs
+                    docs = list(result)
+                else:
+                    # Single doc object
+                    docs = [result]
+                formatted_search_docs = "\n\n---\n\n".join(
+                    [
+                        f'<Document source="{url}" metadata="{getattr(doc, "metadata", {})}"/>\n{getattr(doc, "markdown", "")}\n</Document>'
+                        for doc in docs
+                    ]
+                )
+                logger.info(f"Documents loaded using FireCrawl scraper for url {url}.")
+                return [Document(page_content=formatted_search_docs)]
+            except Exception as e:
+                logger.info(f"Error loading documents from using web scraper {url}: {e}")
+                web_scraper = WebScraper()
+                markdown_docs = await web_scraper.load_html_to_md(url)
+                logger.info(f"Loaded {len(markdown_docs)} Markdown documents from {url}.")
+                if not markdown_docs:
+                    logger.warning(f"No documents found at {url}.")
+                    return []
+                return markdown_docs
         else:
             documents = await self.pypdf_loader()
             return documents
 
     async def transform_documents(self, documents: List[Document]) -> List[GraphDocument]:
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=750, chunk_overlap=50)
+        doc = text_splitter.split_documents(documents)
         graph_documents_filtered = await self.transformer.aconvert_to_graph_documents(
-            documents
+            doc
         )
         logger.info(f"Transformed {len(documents)} documents into graph documents.")
         return graph_documents_filtered

@@ -22,9 +22,9 @@ import asyncio
 from dotenv import load_dotenv
 from graphDB import GraphDB
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
 from langchain_core.rate_limiters import InMemoryRateLimiter
 import re
+from langchain_cerebras import ChatCerebras
 load_dotenv()
 
 TODAY_DATE = datetime.now().strftime("%Y-%m-%d")
@@ -126,7 +126,7 @@ rate_limiter = InMemoryRateLimiter(
 )
 
 llm_query = ChatGoogleGenerativeAI(model="gemini-2.0-flash",max_retries=4 ,temperature=0,rate_limiter=rate_limiter)
-llm = ChatGroq(model="qwen-qwq-32b", temperature=0)
+llm = ChatCerebras(model="qwen-3-32b",temperature=0)
 
 graph_db = GraphDB(llm =llm,refresh_schema=True)
 
@@ -308,7 +308,8 @@ async def graph_query(query_text: str) -> Dict[str, Any]:
           - records: result rows or write summary
           - answer: LLM confirmation or explanation
           - message: human‑readable summary or error
-
+    
+    Note: Please Input Only Natural language instruction.
     WARNING: May modify the graph (CREATE, MERGE, SET, DELETE). Verify before use.
     """
     response = await graph_db.query(query_text,llm=llm_query)
