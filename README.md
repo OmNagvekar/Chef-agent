@@ -1,4 +1,3 @@
-````markdown
 # Chef‑Agent Knowledge‑Graph Cooking Assistant
 
 A streaming AI “Chef” agent that uses LangGraph workflows, MCP tools, and a Neo4j‑backed recipe knowledge graph to answer cooking queries, update or ingest recipes, and remember user preferences.
@@ -54,7 +53,6 @@ NEO4J_DATABASE=
 
 # Redis (optional)
 DB_URI=redis://localhost:6379/0
-````
 
 ---
 
