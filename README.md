@@ -142,6 +142,18 @@ python agent.py
 
 ---
 
+## Future Work
+
+* **Multi-agent**: multiple agents can be run in parallel & share memory.
+* **Distributed**: multiple instances of the agent can be run on different machines.
+* **Multilingual**: Support for multiple languages.
+* **Multimodal**: Support for video/image based analysis for clear instructions.
+* **Multi-modal**: Support for voice based analysis for clear instructions.
+* **Security**: Add authentication & authorization.
+* **Voice**: Support for voice based analysis for clear instructions.
+
+---
+
 ## Contributing
 
 Contributions are welcome! To contribute:
