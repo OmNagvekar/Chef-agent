@@ -4,6 +4,12 @@ A streaming AI “Chef” agent that uses LangGraph workflows, MCP tools, and a 
 
 ---
 
+### Agent Graph Architecture Image
+
+![alt text](https://github.com/OmNagvekar/Chef-agent/blob/main/graph.png?raw=true)
+
+---
+
 ## 🚀 Features
 
 - **Interactive streaming** conversation via FastMCP + FastAPI  
