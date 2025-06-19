@@ -29,7 +29,7 @@ A streaming AI “Chef” agent that uses LangGraph workflows, MCP tools, and a 
 
 Create a `.env` file at project root and set all of the following:
 
-```ini
+```.env
 # Multi‑provider LLM keys
 GOOGLE_API_KEY=
 GROQ_API_KEY=
@@ -53,7 +53,7 @@ NEO4J_DATABASE=
 
 # Redis (optional)
 DB_URI=redis://localhost:6379/0
-
+```
 ---
 
 ## 🔧 Installation
