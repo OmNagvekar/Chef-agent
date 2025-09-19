@@ -1,4 +1,5 @@
 # Chef‑Agent Knowledge‑Graph Cooking Assistant
+![](https://visitor-badge.laobi.icu/badge?page_id=OmNagvekar/Chef-agent)
 
 A streaming AI “Chef” agent that uses LangGraph workflows, MCP tools, and a Neo4j‑backed recipe knowledge graph to answer cooking queries, update or ingest recipes, and remember user preferences.
 
